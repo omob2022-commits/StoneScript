@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="StoneScript/StoneScript.vcxproj" />
+  <Project Path="StoneScript/StoneScript.vcxproj" Id="70c14e76-15ec-4224-a6ff-89e081ee70ad" />
 </Solution>
