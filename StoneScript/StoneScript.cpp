@@ -5,21 +5,22 @@
 #include <memory>
 #include <map>
 #include <sstream>
+#include <set>
 
 enum class TokenType {
     // Keywords
     LET, PRINT, IF, ELSE, WHILE,
-    
+
     // Identifiers and Literals
     IDENTIFIER, INTEGER,
-    
+
     // Operators
     ASSIGN, PLUS, MINUS, MULTIPLY, DIVIDE,
     EQ, NE, LT, GT, LE, GE,
-    
+
     // Delimiters
     SEMICOLON, LBRACE, RBRACE,
-    
+
     // Special
     EOF_TYPE
 };
@@ -81,37 +82,36 @@ public:
         skipWhitespace();
 
         if (cursor >= input.size()) {
-            return Token{TokenType::EOF_TYPE, ""};
+            return Token{ TokenType::EOF_TYPE, "" };
         }
 
         char current = input[cursor];
 
         if (std::isdigit(current)) {
             std::string numStr = readNumber();
-            return Token{TokenType::INTEGER, numStr};
+            return Token{ TokenType::INTEGER, numStr };
         }
 
         if (std::isalpha(current) || current == '_') {
             std::string ident = readIdentifier();
             TokenType type = getKeywordType(ident);
-            return Token{type, ident};
+            return Token{ type, ident };
         }
 
-        // Two-character operators with lookahead
         if (current == '=') {
             cursor++;
             if (peekChar(cursor - 1) == '=' && peekChar(cursor) == '=') {
                 cursor++;
-                return Token{TokenType::EQ, "=="};
+                return Token{ TokenType::EQ, "==" };
             }
-            return Token{TokenType::ASSIGN, "="};
+            return Token{ TokenType::ASSIGN, "=" };
         }
 
         if (current == '!') {
             cursor++;
             if (peekChar(cursor - 1) == '!' && peekChar(cursor) == '=') {
                 cursor++;
-                return Token{TokenType::NE, "!="};
+                return Token{ TokenType::NE, "!=" };
             }
             throw std::runtime_error("Unexpected character: !");
         }
@@ -120,36 +120,36 @@ public:
             cursor++;
             if (peekChar(cursor - 1) == '<' && peekChar(cursor) == '=') {
                 cursor++;
-                return Token{TokenType::LE, "<="};
+                return Token{ TokenType::LE, "<=" };
             }
-            return Token{TokenType::LT, "<"};
+            return Token{ TokenType::LT, "<" };
         }
 
         if (current == '>') {
             cursor++;
             if (peekChar(cursor - 1) == '>' && peekChar(cursor) == '=') {
                 cursor++;
-                return Token{TokenType::GE, ">="};
+                return Token{ TokenType::GE, ">=" };
             }
-            return Token{TokenType::GT, ">"};
+            return Token{ TokenType::GT, ">" };
         }
 
         cursor++;
         switch (current) {
         case '+':
-            return Token{TokenType::PLUS, "+"};
+            return Token{ TokenType::PLUS, "+" };
         case '-':
-            return Token{TokenType::MINUS, "-"};
+            return Token{ TokenType::MINUS, "-" };
         case '*':
-            return Token{TokenType::MULTIPLY, "*"};
+            return Token{ TokenType::MULTIPLY, "*" };
         case '/':
-            return Token{TokenType::DIVIDE, "/"};
+            return Token{ TokenType::DIVIDE, "/" };
         case ';':
-            return Token{TokenType::SEMICOLON, ";"};
+            return Token{ TokenType::SEMICOLON, ";" };
         case '{':
-            return Token{TokenType::LBRACE, "{"};
+            return Token{ TokenType::LBRACE, "{" };
         case '}':
-            return Token{TokenType::RBRACE, "}"};
+            return Token{ TokenType::RBRACE, "}" };
         default:
             throw std::runtime_error(std::string("Unexpected character: ") + current);
         }
@@ -188,14 +188,24 @@ struct BinaryOpNode : ASTNode {
     std::shared_ptr<ASTNode> right;
     TokenType op;
     BinaryOpNode(std::shared_ptr<ASTNode> l, std::shared_ptr<ASTNode> r, TokenType o)
-        : left(l), right(r), op(o) {}
+        : left(l), right(r), op(o) {
+    }
 };
 
 struct VariableDeclNode : ASTNode {
     std::string name;
     std::shared_ptr<ASTNode> value;
     VariableDeclNode(const std::string& n, std::shared_ptr<ASTNode> v)
-        : name(n), value(v) {}
+        : name(n), value(v) {
+    }
+};
+
+struct AssignmentNode : ASTNode {
+    std::string name;
+    std::shared_ptr<ASTNode> value;
+    AssignmentNode(const std::string& n, std::shared_ptr<ASTNode> v)
+        : name(n), value(v) {
+    }
 };
 
 struct PrintNode : ASTNode {
@@ -212,14 +222,16 @@ struct IfStatementNode : ASTNode {
     std::shared_ptr<BlockNode> thenBlock;
     std::shared_ptr<BlockNode> elseBlock;
     IfStatementNode(std::shared_ptr<ASTNode> cond, std::shared_ptr<BlockNode> then, std::shared_ptr<BlockNode> els = nullptr)
-        : condition(cond), thenBlock(then), elseBlock(els) {}
+        : condition(cond), thenBlock(then), elseBlock(els) {
+    }
 };
 
 struct WhileStatementNode : ASTNode {
     std::shared_ptr<ASTNode> condition;
     std::shared_ptr<BlockNode> body;
     WhileStatementNode(std::shared_ptr<ASTNode> cond, std::shared_ptr<BlockNode> b)
-        : condition(cond), body(b) {}
+        : condition(cond), body(b) {
+    }
 };
 
 struct ProgramNode : ASTNode {
@@ -236,7 +248,14 @@ private:
         if (current < tokens.size()) {
             return tokens[current];
         }
-        return Token{TokenType::EOF_TYPE, ""};
+        return Token{ TokenType::EOF_TYPE, "" };
+    }
+
+    Token peek(size_t offset) {
+        if (current + offset < tokens.size()) {
+            return tokens[current + offset];
+        }
+        return Token{ TokenType::EOF_TYPE, "" };
     }
 
     Token advance() {
@@ -262,8 +281,8 @@ private:
         auto left = parseAddition();
 
         while (peek().type == TokenType::EQ || peek().type == TokenType::NE ||
-               peek().type == TokenType::LT || peek().type == TokenType::GT ||
-               peek().type == TokenType::LE || peek().type == TokenType::GE) {
+            peek().type == TokenType::LT || peek().type == TokenType::GT ||
+            peek().type == TokenType::LE || peek().type == TokenType::GE) {
             TokenType op = peek().type;
             advance();
             auto right = parseAddition();
@@ -346,6 +365,10 @@ private:
             return parseWhileStatement();
         }
 
+        if (token.type == TokenType::IDENTIFIER && peek(1).type == TokenType::ASSIGN) {
+            return parseAssignment();
+        }
+
         throw std::runtime_error("Unexpected statement");
     }
 
@@ -358,6 +381,16 @@ private:
         expect(TokenType::SEMICOLON);
 
         return std::make_shared<VariableDeclNode>(nameToken.value, value);
+    }
+
+    std::shared_ptr<ASTNode> parseAssignment() {
+        Token nameToken = peek();
+        expect(TokenType::IDENTIFIER);
+        expect(TokenType::ASSIGN);
+        auto value = parseExpression();
+        expect(TokenType::SEMICOLON);
+
+        return std::make_shared<AssignmentNode>(nameToken.value, value);
     }
 
     std::shared_ptr<ASTNode> parsePrintStatement() {
@@ -404,72 +437,145 @@ public:
     }
 };
 
-// Semantic Analyzer (Symbol Table) (pure pain :) )
+// Semantic Analyzer with Scope Stack
 class SemanticAnalyzer {
 private:
-    std::map<std::string, bool> symbols;
+    std::vector<std::map<std::string, bool>> scopeStack;
 
-    void checkVariable(const std::string& name, const std::shared_ptr<ASTNode>& node) {
+    bool isVariableDefined(const std::string& name) {
+        for (auto it = scopeStack.rbegin(); it != scopeStack.rend(); ++it) {
+            if (it->find(name) != it->end()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void defineVariable(const std::string& name) {
+        if (!scopeStack.empty()) {
+            scopeStack.back()[name] = true;
+        }
+    }
+
+    void pushScope() {
+        scopeStack.push_back(std::map<std::string, bool>());
+    }
+
+    void popScope() {
+        if (!scopeStack.empty()) {
+            scopeStack.pop_back();
+        }
+    }
+
+    void checkVariable(const std::shared_ptr<ASTNode>& node) {
         if (auto id = std::dynamic_pointer_cast<IdentifierNode>(node)) {
-            if (symbols.find(id->name) == symbols.end()) {
+            if (!isVariableDefined(id->name)) {
                 throw std::runtime_error("Symbol not found: " + id->name);
             }
-        } else if (auto binOp = std::dynamic_pointer_cast<BinaryOpNode>(node)) {
-            checkVariable(name, binOp->left);
-            checkVariable(name, binOp->right);
-        } else if (auto print = std::dynamic_pointer_cast<PrintNode>(node)) {
-            checkVariable(name, print->expression);
+        }
+        else if (auto binOp = std::dynamic_pointer_cast<BinaryOpNode>(node)) {
+            checkVariable(binOp->left);
+            checkVariable(binOp->right);
+        }
+        else if (auto print = std::dynamic_pointer_cast<PrintNode>(node)) {
+            checkVariable(print->expression);
         }
     }
 
     void analyzeNode(const std::shared_ptr<ASTNode>& node) {
         if (auto varDecl = std::dynamic_pointer_cast<VariableDeclNode>(node)) {
-            checkVariable(varDecl->name, varDecl->value);
-            symbols[varDecl->name] = true;
-        } else if (auto printStmt = std::dynamic_pointer_cast<PrintNode>(node)) {
-            checkVariable("", printStmt->expression);
-        } else if (auto ifStmt = std::dynamic_pointer_cast<IfStatementNode>(node)) {
-            checkVariable("", ifStmt->condition);
+            checkVariable(varDecl->value);
+            defineVariable(varDecl->name);
+        }
+        else if (auto assign = std::dynamic_pointer_cast<AssignmentNode>(node)) {
+            if (!isVariableDefined(assign->name)) {
+                throw std::runtime_error("Cannot assign to undefined variable: " + assign->name);
+            }
+            checkVariable(assign->value);
+        }
+        else if (auto printStmt = std::dynamic_pointer_cast<PrintNode>(node)) {
+            checkVariable(printStmt->expression);
+        }
+        else if (auto ifStmt = std::dynamic_pointer_cast<IfStatementNode>(node)) {
+            checkVariable(ifStmt->condition);
+            pushScope();
             for (const auto& stmt : ifStmt->thenBlock->statements) {
                 analyzeNode(stmt);
             }
+            popScope();
             if (ifStmt->elseBlock) {
+                pushScope();
                 for (const auto& stmt : ifStmt->elseBlock->statements) {
                     analyzeNode(stmt);
                 }
+                popScope();
             }
-        } else if (auto whileStmt = std::dynamic_pointer_cast<WhileStatementNode>(node)) {
-            checkVariable("", whileStmt->condition);
+        }
+        else if (auto whileStmt = std::dynamic_pointer_cast<WhileStatementNode>(node)) {
+            checkVariable(whileStmt->condition);
+            pushScope();
             for (const auto& stmt : whileStmt->body->statements) {
                 analyzeNode(stmt);
             }
+            popScope();
         }
     }
 
 public:
     void analyze(const std::shared_ptr<ProgramNode>& program) {
+        scopeStack.clear();
+        pushScope();
+
         for (const auto& stmt : program->statements) {
             analyzeNode(stmt);
         }
+
+        popScope();
     }
 };
 
-// Transpiler (generates C++ code) 
+// Transpiler (generates C++ code)
 class Transpiler {
 private:
     std::stringstream code;
     int indentLevel;
+    std::vector<std::set<std::string>> declaredVars;
 
     std::string getIndent() {
         return std::string(indentLevel * 4, ' ');
     }
 
+    bool isVariableDeclaredInScope(const std::string& name) {
+        if (!declaredVars.empty()) {
+            return declaredVars.back().find(name) != declaredVars.back().end();
+        }
+        return false;
+    }
+
+    void markVariableDeclared(const std::string& name) {
+        if (!declaredVars.empty()) {
+            declaredVars.back().insert(name);
+        }
+    }
+
+    void pushScope() {
+        declaredVars.push_back(std::set<std::string>());
+    }
+
+    void popScope() {
+        if (!declaredVars.empty()) {
+            declaredVars.pop_back();
+        }
+    }
+
     std::string transpileExpression(const std::shared_ptr<ASTNode>& node) {
         if (auto intNode = std::dynamic_pointer_cast<IntegerNode>(node)) {
             return std::to_string(intNode->value);
-        } else if (auto idNode = std::dynamic_pointer_cast<IdentifierNode>(node)) {
+        }
+        else if (auto idNode = std::dynamic_pointer_cast<IdentifierNode>(node)) {
             return idNode->name;
-        } else if (auto binOp = std::dynamic_pointer_cast<BinaryOpNode>(node)) {
+        }
+        else if (auto binOp = std::dynamic_pointer_cast<BinaryOpNode>(node)) {
             std::string left = transpileExpression(binOp->left);
             std::string right = transpileExpression(binOp->right);
             std::string op;
@@ -496,30 +602,43 @@ private:
     void transpileStatement(const std::shared_ptr<ASTNode>& node) {
         if (auto varDecl = std::dynamic_pointer_cast<VariableDeclNode>(node)) {
             code << getIndent() << "int " << varDecl->name << " = " << transpileExpression(varDecl->value) << ";\n";
-        } else if (auto printStmt = std::dynamic_pointer_cast<PrintNode>(node)) {
+            markVariableDeclared(varDecl->name);
+        }
+        else if (auto assign = std::dynamic_pointer_cast<AssignmentNode>(node)) {
+            code << getIndent() << assign->name << " = " << transpileExpression(assign->value) << ";\n";
+        }
+        else if (auto printStmt = std::dynamic_pointer_cast<PrintNode>(node)) {
             code << getIndent() << "std::cout << " << transpileExpression(printStmt->expression) << " << std::endl;\n";
-        } else if (auto ifStmt = std::dynamic_pointer_cast<IfStatementNode>(node)) {
+        }
+        else if (auto ifStmt = std::dynamic_pointer_cast<IfStatementNode>(node)) {
             code << getIndent() << "if (" << transpileExpression(ifStmt->condition) << ") {\n";
             indentLevel++;
+            pushScope();
             for (const auto& stmt : ifStmt->thenBlock->statements) {
                 transpileStatement(stmt);
             }
+            popScope();
             indentLevel--;
             if (ifStmt->elseBlock) {
                 code << getIndent() << "} else {\n";
                 indentLevel++;
+                pushScope();
                 for (const auto& stmt : ifStmt->elseBlock->statements) {
                     transpileStatement(stmt);
                 }
+                popScope();
                 indentLevel--;
             }
             code << getIndent() << "}\n";
-        } else if (auto whileStmt = std::dynamic_pointer_cast<WhileStatementNode>(node)) {
+        }
+        else if (auto whileStmt = std::dynamic_pointer_cast<WhileStatementNode>(node)) {
             code << getIndent() << "while (" << transpileExpression(whileStmt->condition) << ") {\n";
             indentLevel++;
+            pushScope();
             for (const auto& stmt : whileStmt->body->statements) {
                 transpileStatement(stmt);
             }
+            popScope();
             indentLevel--;
             code << getIndent() << "}\n";
         }
@@ -530,6 +649,9 @@ public:
 
     std::string transpile(const std::shared_ptr<ProgramNode>& program) {
         code.str("");
+        declaredVars.clear();
+        pushScope();
+
         code << "#include <iostream>\n\n";
         code << "int main() {\n";
         indentLevel = 1;
@@ -542,16 +664,18 @@ public:
         code << "    return 0;\n";
         code << "}\n";
 
+        popScope();
         return code.str();
     }
 };
 
 int main() {
     std::string code = R"(
+       
         let x = 10;
         let y = 5;
         print x + y;
-        
+        print x + y* x;
         if x > y {
             print 1;
         } else {
@@ -561,7 +685,7 @@ int main() {
         let i = 0;
         while i < 3 {
             print i;
-            let i = i + 1;
+            i = i + 1;
         }
     )";
 
@@ -594,7 +718,8 @@ int main() {
         std::string cppCode = transpiler.transpile(ast);
         std::cout << cppCode << std::endl;
 
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         return 1;
     }
