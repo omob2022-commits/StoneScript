@@ -9,7 +9,7 @@
 
 enum class TokenType {
     // Keywords
-    LET, PRINT, IF, ELSE, WHILE,
+    LET, PRINT, IF, ELSE, WHILE, FN, RETURN,
 
     // Identifiers and Literals
     IDENTIFIER, INTEGER,
@@ -19,7 +19,7 @@ enum class TokenType {
     EQ, NE, LT, GT, LE, GE,
 
     // Delimiters
-    SEMICOLON, LBRACE, RBRACE,
+    SEMICOLON, LBRACE, RBRACE, LPAREN, RPAREN, COMMA,
 
     // Special
     EOF_TYPE
@@ -72,6 +72,8 @@ private:
         if (word == "if") return TokenType::IF;
         if (word == "else") return TokenType::ELSE;
         if (word == "while") return TokenType::WHILE;
+        if (word == "fn") return TokenType::FN;
+        if (word == "return") return TokenType::RETURN;
         return TokenType::IDENTIFIER;
     }
 
@@ -150,6 +152,12 @@ public:
             return Token{ TokenType::LBRACE, "{" };
         case '}':
             return Token{ TokenType::RBRACE, "}" };
+        case '(':
+            return Token{ TokenType::LPAREN, "(" };
+        case ')':
+            return Token{ TokenType::RPAREN, ")" };
+        case ',':
+            return Token{ TokenType::COMMA, "," };
         default:
             throw std::runtime_error(std::string("Unexpected character: ") + current);
         }
@@ -188,24 +196,21 @@ struct BinaryOpNode : ASTNode {
     std::shared_ptr<ASTNode> right;
     TokenType op;
     BinaryOpNode(std::shared_ptr<ASTNode> l, std::shared_ptr<ASTNode> r, TokenType o)
-        : left(l), right(r), op(o) {
-    }
+        : left(l), right(r), op(o) {}
 };
 
 struct VariableDeclNode : ASTNode {
     std::string name;
     std::shared_ptr<ASTNode> value;
     VariableDeclNode(const std::string& n, std::shared_ptr<ASTNode> v)
-        : name(n), value(v) {
-    }
+        : name(n), value(v) {}
 };
 
 struct AssignmentNode : ASTNode {
     std::string name;
     std::shared_ptr<ASTNode> value;
     AssignmentNode(const std::string& n, std::shared_ptr<ASTNode> v)
-        : name(n), value(v) {
-    }
+        : name(n), value(v) {}
 };
 
 struct PrintNode : ASTNode {
@@ -222,16 +227,34 @@ struct IfStatementNode : ASTNode {
     std::shared_ptr<BlockNode> thenBlock;
     std::shared_ptr<BlockNode> elseBlock;
     IfStatementNode(std::shared_ptr<ASTNode> cond, std::shared_ptr<BlockNode> then, std::shared_ptr<BlockNode> els = nullptr)
-        : condition(cond), thenBlock(then), elseBlock(els) {
-    }
+        : condition(cond), thenBlock(then), elseBlock(els) {}
 };
 
 struct WhileStatementNode : ASTNode {
     std::shared_ptr<ASTNode> condition;
     std::shared_ptr<BlockNode> body;
     WhileStatementNode(std::shared_ptr<ASTNode> cond, std::shared_ptr<BlockNode> b)
-        : condition(cond), body(b) {
-    }
+        : condition(cond), body(b) {}
+};
+
+struct ReturnNode : ASTNode {
+    std::shared_ptr<ASTNode> value;
+    ReturnNode(std::shared_ptr<ASTNode> v) : value(v) {}
+};
+
+struct FunctionCallNode : ASTNode {
+    std::string name;
+    std::vector<std::shared_ptr<ASTNode>> arguments;
+    FunctionCallNode(const std::string& n, const std::vector<std::shared_ptr<ASTNode>>& args)
+        : name(n), arguments(args) {}
+};
+
+struct FunctionDeclNode : ASTNode {
+    std::string name;
+    std::vector<std::string> parameters;
+    std::shared_ptr<BlockNode> body;
+    FunctionDeclNode(const std::string& n, const std::vector<std::string>& params, std::shared_ptr<BlockNode> b)
+        : name(n), parameters(params), body(b) {}
 };
 
 struct ProgramNode : ASTNode {
@@ -327,11 +350,40 @@ private:
         }
 
         if (token.type == TokenType::IDENTIFIER) {
+            std::string name = token.value;
             advance();
-            return std::make_shared<IdentifierNode>(token.value);
+
+            if (peek().type == TokenType::LPAREN) {
+                return parseFunctionCall(name);
+            }
+
+            return std::make_shared<IdentifierNode>(name);
         }
 
         throw std::runtime_error("Unexpected token in expression");
+    }
+
+    std::vector<std::shared_ptr<ASTNode>> parseArguments() {
+        std::vector<std::shared_ptr<ASTNode>> args;
+
+        if (peek().type != TokenType::RPAREN) {
+            args.push_back(parseExpression());
+
+            while (peek().type == TokenType::COMMA) {
+                advance();
+                args.push_back(parseExpression());
+            }
+        }
+
+        return args;
+    }
+
+    std::shared_ptr<ASTNode> parseFunctionCall(const std::string& name) {
+        expect(TokenType::LPAREN);
+        auto args = parseArguments();
+        expect(TokenType::RPAREN);
+
+        return std::make_shared<FunctionCallNode>(name, args);
     }
 
     std::shared_ptr<BlockNode> parseBlock() {
@@ -365,8 +417,20 @@ private:
             return parseWhileStatement();
         }
 
+        if (token.type == TokenType::RETURN) {
+            return parseReturnStatement();
+        }
+
         if (token.type == TokenType::IDENTIFIER && peek(1).type == TokenType::ASSIGN) {
             return parseAssignment();
+        }
+
+        if (token.type == TokenType::IDENTIFIER && peek(1).type == TokenType::LPAREN) {
+            std::string name = token.value;
+            advance();
+            auto callNode = parseFunctionCall(name);
+            expect(TokenType::SEMICOLON);
+            return callNode;
         }
 
         throw std::runtime_error("Unexpected statement");
@@ -401,6 +465,14 @@ private:
         return std::make_shared<PrintNode>(expr);
     }
 
+    std::shared_ptr<ASTNode> parseReturnStatement() {
+        expect(TokenType::RETURN);
+        auto expr = parseExpression();
+        expect(TokenType::SEMICOLON);
+
+        return std::make_shared<ReturnNode>(expr);
+    }
+
     std::shared_ptr<ASTNode> parseIfStatement() {
         expect(TokenType::IF);
         auto condition = parseExpression();
@@ -423,6 +495,30 @@ private:
         return std::make_shared<WhileStatementNode>(condition, body);
     }
 
+    std::shared_ptr<ASTNode> parseFunctionDeclaration() {
+        expect(TokenType::FN);
+        Token nameToken = peek();
+        expect(TokenType::IDENTIFIER);
+        expect(TokenType::LPAREN);
+
+        std::vector<std::string> params;
+        if (peek().type != TokenType::RPAREN) {
+            params.push_back(peek().value);
+            expect(TokenType::IDENTIFIER);
+
+            while (peek().type == TokenType::COMMA) {
+                advance();
+                params.push_back(peek().value);
+                expect(TokenType::IDENTIFIER);
+            }
+        }
+
+        expect(TokenType::RPAREN);
+        auto body = parseBlock();
+
+        return std::make_shared<FunctionDeclNode>(nameToken.value, params, body);
+    }
+
 public:
     Parser(const std::vector<Token>& t) : tokens(t), current(0) {}
 
@@ -430,7 +526,11 @@ public:
         auto program = std::make_shared<ProgramNode>();
 
         while (peek().type != TokenType::EOF_TYPE) {
-            program->statements.push_back(parseStatement());
+            if (peek().type == TokenType::FN) {
+                program->statements.push_back(parseFunctionDeclaration());
+            } else {
+                program->statements.push_back(parseStatement());
+            }
         }
 
         return program;
@@ -441,6 +541,7 @@ public:
 class SemanticAnalyzer {
 private:
     std::vector<std::map<std::string, bool>> scopeStack;
+    std::map<std::string, size_t> functionTable;
 
     bool isVariableDefined(const std::string& name) {
         for (auto it = scopeStack.rbegin(); it != scopeStack.rend(); ++it) {
@@ -480,6 +581,23 @@ private:
         else if (auto print = std::dynamic_pointer_cast<PrintNode>(node)) {
             checkVariable(print->expression);
         }
+        else if (auto funcCall = std::dynamic_pointer_cast<FunctionCallNode>(node)) {
+            if (functionTable.find(funcCall->name) == functionTable.end()) {
+                throw std::runtime_error("Function not found: " + funcCall->name);
+            }
+            size_t expectedParams = functionTable[funcCall->name];
+            if (funcCall->arguments.size() != expectedParams) {
+                throw std::runtime_error("Function " + funcCall->name + " expects " + 
+                    std::to_string(expectedParams) + " arguments, got " + 
+                    std::to_string(funcCall->arguments.size()));
+            }
+            for (const auto& arg : funcCall->arguments) {
+                checkVariable(arg);
+            }
+        }
+        else if (auto ret = std::dynamic_pointer_cast<ReturnNode>(node)) {
+            checkVariable(ret->value);
+        }
     }
 
     void analyzeNode(const std::shared_ptr<ASTNode>& node) {
@@ -495,6 +613,9 @@ private:
         }
         else if (auto printStmt = std::dynamic_pointer_cast<PrintNode>(node)) {
             checkVariable(printStmt->expression);
+        }
+        else if (auto funcCall = std::dynamic_pointer_cast<FunctionCallNode>(node)) {
+            checkVariable(funcCall);
         }
         else if (auto ifStmt = std::dynamic_pointer_cast<IfStatementNode>(node)) {
             checkVariable(ifStmt->condition);
@@ -519,10 +640,32 @@ private:
             }
             popScope();
         }
+        else if (auto funcDecl = std::dynamic_pointer_cast<FunctionDeclNode>(node)) {
+            pushScope();
+            for (const auto& param : funcDecl->parameters) {
+                defineVariable(param);
+            }
+            for (const auto& stmt : funcDecl->body->statements) {
+                analyzeNode(stmt);
+            }
+            popScope();
+        }
+        else if (auto ret = std::dynamic_pointer_cast<ReturnNode>(node)) {
+            checkVariable(ret->value);
+        }
     }
 
 public:
     void analyze(const std::shared_ptr<ProgramNode>& program) {
+        // First pass: collect all function declarations
+        functionTable.clear();
+        for (const auto& stmt : program->statements) {
+            if (auto funcDecl = std::dynamic_pointer_cast<FunctionDeclNode>(stmt)) {
+                functionTable[funcDecl->name] = funcDecl->parameters.size();
+            }
+        }
+
+        // Second pass: analyze statements
         scopeStack.clear();
         pushScope();
 
@@ -538,18 +681,13 @@ public:
 class Transpiler {
 private:
     std::stringstream code;
+    std::stringstream forwardDeclarations;
     int indentLevel;
     std::vector<std::set<std::string>> declaredVars;
+    std::map<std::string, std::shared_ptr<FunctionDeclNode>> functions;
 
     std::string getIndent() {
         return std::string(indentLevel * 4, ' ');
-    }
-
-    bool isVariableDeclaredInScope(const std::string& name) {
-        if (!declaredVars.empty()) {
-            return declaredVars.back().find(name) != declaredVars.back().end();
-        }
-        return false;
     }
 
     void markVariableDeclared(const std::string& name) {
@@ -596,6 +734,15 @@ private:
 
             return "(" + left + " " + op + " " + right + ")";
         }
+        else if (auto funcCall = std::dynamic_pointer_cast<FunctionCallNode>(node)) {
+            std::string callStr = funcCall->name + "(";
+            for (size_t i = 0; i < funcCall->arguments.size(); ++i) {
+                if (i > 0) callStr += ", ";
+                callStr += transpileExpression(funcCall->arguments[i]);
+            }
+            callStr += ")";
+            return callStr;
+        }
         return "";
     }
 
@@ -609,6 +756,12 @@ private:
         }
         else if (auto printStmt = std::dynamic_pointer_cast<PrintNode>(node)) {
             code << getIndent() << "std::cout << " << transpileExpression(printStmt->expression) << " << std::endl;\n";
+        }
+        else if (auto funcCall = std::dynamic_pointer_cast<FunctionCallNode>(node)) {
+            code << getIndent() << transpileExpression(funcCall) << ";\n";
+        }
+        else if (auto retStmt = std::dynamic_pointer_cast<ReturnNode>(node)) {
+            code << getIndent() << "return " << transpileExpression(retStmt->value) << ";\n";
         }
         else if (auto ifStmt = std::dynamic_pointer_cast<IfStatementNode>(node)) {
             code << getIndent() << "if (" << transpileExpression(ifStmt->condition) << ") {\n";
@@ -644,20 +797,72 @@ private:
         }
     }
 
+    void transpileFunction(const std::shared_ptr<FunctionDeclNode>& funcDecl) {
+        code << "int " << funcDecl->name << "(";
+        for (size_t i = 0; i < funcDecl->parameters.size(); ++i) {
+            if (i > 0) code << ", ";
+            code << "int " << funcDecl->parameters[i];
+        }
+        code << ") {\n";
+
+        indentLevel = 1;
+        pushScope();
+        for (const auto& param : funcDecl->parameters) {
+            markVariableDeclared(param);
+        }
+
+        for (const auto& stmt : funcDecl->body->statements) {
+            transpileStatement(stmt);
+        }
+
+        popScope();
+        indentLevel = 0;
+        code << "}\n\n";
+    }
+
 public:
     Transpiler() : indentLevel(0) {}
 
     std::string transpile(const std::shared_ptr<ProgramNode>& program) {
         code.str("");
         declaredVars.clear();
+        functions.clear();
         pushScope();
 
         code << "#include <iostream>\n\n";
+
+        // Collect all function declarations for forward declarations
+        for (const auto& stmt : program->statements) {
+            if (auto funcDecl = std::dynamic_pointer_cast<FunctionDeclNode>(stmt)) {
+                functions[funcDecl->name] = funcDecl;
+                code << "int " << funcDecl->name << "(";
+                for (size_t i = 0; i < funcDecl->parameters.size(); ++i) {
+                    if (i > 0) code << ", ";
+                    code << "int " << funcDecl->parameters[i];
+                }
+                code << ");\n";
+            }
+        }
+
+        if (!functions.empty()) {
+            code << "\n";
+        }
+
+        // Transpile all function declarations
+        for (const auto& stmt : program->statements) {
+            if (auto funcDecl = std::dynamic_pointer_cast<FunctionDeclNode>(stmt)) {
+                transpileFunction(funcDecl);
+            }
+        }
+
+        // Main function
         code << "int main() {\n";
         indentLevel = 1;
 
         for (const auto& stmt : program->statements) {
-            transpileStatement(stmt);
+            if (!std::dynamic_pointer_cast<FunctionDeclNode>(stmt)) {
+                transpileStatement(stmt);
+            }
         }
 
         indentLevel = 0;
@@ -671,21 +876,26 @@ public:
 
 int main() {
     std::string code = R"(
-       
-        let x = 10;
-        let y = 5;
-        print x + y;
-        print x + y* x;
-        if x > y {
-            print 1;
-        } else {
-            print 0;
+        fn add(a, b) {
+            return a + b;
         }
-        
-        let i = 0;
-        while i < 3 {
-            print i;
-            i = i + 1;
+
+        fn multiply(x, y) {
+            return x * y;
+        }
+
+        let x = 5;
+        let y = 10;
+        let result = add(x, y);
+        print result;
+
+        let prod = multiply(x, y);
+        print prod;
+
+        if result > prod {
+            print 0;
+        } else {
+            print 1;
         }
     )";
 
