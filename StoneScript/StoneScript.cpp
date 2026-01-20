@@ -3,19 +3,22 @@
 #include <cctype>
 #include <vector>
 #include <memory>
+#include <map>
+#include <sstream>
 
 enum class TokenType {
     // Keywords
-    LET, PRINT,
+    LET, PRINT, IF, ELSE, WHILE,
     
     // Identifiers and Literals
     IDENTIFIER, INTEGER,
     
     // Operators
-    ASSIGN, PLUS, MINUS,
+    ASSIGN, PLUS, MINUS, MULTIPLY, DIVIDE,
+    EQ, NE, LT, GT, LE, GE,
     
     // Delimiters
-    SEMICOLON,
+    SEMICOLON, LBRACE, RBRACE,
     
     // Special
     EOF_TYPE
@@ -35,6 +38,13 @@ private:
         while (cursor < input.size() && std::isspace(input[cursor])) {
             cursor++;
         }
+    }
+
+    char peekChar(size_t offset = 0) {
+        if (cursor + offset < input.size()) {
+            return input[cursor + offset];
+        }
+        return '\0';
     }
 
     std::string readNumber() {
@@ -58,6 +68,9 @@ private:
     TokenType getKeywordType(const std::string& word) {
         if (word == "let") return TokenType::LET;
         if (word == "print") return TokenType::PRINT;
+        if (word == "if") return TokenType::IF;
+        if (word == "else") return TokenType::ELSE;
+        if (word == "while") return TokenType::WHILE;
         return TokenType::IDENTIFIER;
     }
 
@@ -84,16 +97,59 @@ public:
             return Token{type, ident};
         }
 
+        // Two-character operators with lookahead
+        if (current == '=') {
+            cursor++;
+            if (peekChar(cursor - 1) == '=' && peekChar(cursor) == '=') {
+                cursor++;
+                return Token{TokenType::EQ, "=="};
+            }
+            return Token{TokenType::ASSIGN, "="};
+        }
+
+        if (current == '!') {
+            cursor++;
+            if (peekChar(cursor - 1) == '!' && peekChar(cursor) == '=') {
+                cursor++;
+                return Token{TokenType::NE, "!="};
+            }
+            throw std::runtime_error("Unexpected character: !");
+        }
+
+        if (current == '<') {
+            cursor++;
+            if (peekChar(cursor - 1) == '<' && peekChar(cursor) == '=') {
+                cursor++;
+                return Token{TokenType::LE, "<="};
+            }
+            return Token{TokenType::LT, "<"};
+        }
+
+        if (current == '>') {
+            cursor++;
+            if (peekChar(cursor - 1) == '>' && peekChar(cursor) == '=') {
+                cursor++;
+                return Token{TokenType::GE, ">="};
+            }
+            return Token{TokenType::GT, ">"};
+        }
+
         cursor++;
         switch (current) {
-        case '=':
-            return Token{TokenType::ASSIGN, "="};
         case '+':
             return Token{TokenType::PLUS, "+"};
         case '-':
             return Token{TokenType::MINUS, "-"};
+        case '*':
+            return Token{TokenType::MULTIPLY, "*"};
+        case '/':
+            return Token{TokenType::DIVIDE, "/"};
         case ';':
             return Token{TokenType::SEMICOLON, ";"};
+        case '{':
+            return Token{TokenType::LBRACE, "{"};
+        case '}':
+            return Token{TokenType::RBRACE, "}"};
         default:
             throw std::runtime_error(std::string("Unexpected character: ") + current);
         }
@@ -147,6 +203,25 @@ struct PrintNode : ASTNode {
     PrintNode(std::shared_ptr<ASTNode> expr) : expression(expr) {}
 };
 
+struct BlockNode : ASTNode {
+    std::vector<std::shared_ptr<ASTNode>> statements;
+};
+
+struct IfStatementNode : ASTNode {
+    std::shared_ptr<ASTNode> condition;
+    std::shared_ptr<BlockNode> thenBlock;
+    std::shared_ptr<BlockNode> elseBlock;
+    IfStatementNode(std::shared_ptr<ASTNode> cond, std::shared_ptr<BlockNode> then, std::shared_ptr<BlockNode> els = nullptr)
+        : condition(cond), thenBlock(then), elseBlock(els) {}
+};
+
+struct WhileStatementNode : ASTNode {
+    std::shared_ptr<ASTNode> condition;
+    std::shared_ptr<BlockNode> body;
+    WhileStatementNode(std::shared_ptr<ASTNode> cond, std::shared_ptr<BlockNode> b)
+        : condition(cond), body(b) {}
+};
+
 struct ProgramNode : ASTNode {
     std::vector<std::shared_ptr<ASTNode>> statements;
 };
@@ -180,7 +255,22 @@ private:
     }
 
     std::shared_ptr<ASTNode> parseExpression() {
-        return parseAddition();
+        return parseComparison();
+    }
+
+    std::shared_ptr<ASTNode> parseComparison() {
+        auto left = parseAddition();
+
+        while (peek().type == TokenType::EQ || peek().type == TokenType::NE ||
+               peek().type == TokenType::LT || peek().type == TokenType::GT ||
+               peek().type == TokenType::LE || peek().type == TokenType::GE) {
+            TokenType op = peek().type;
+            advance();
+            auto right = parseAddition();
+            left = std::make_shared<BinaryOpNode>(left, right, op);
+        }
+
+        return left;
     }
 
     std::shared_ptr<ASTNode> parseAddition() {
@@ -197,7 +287,16 @@ private:
     }
 
     std::shared_ptr<ASTNode> parseMultiplication() {
-        return parsePrimary();
+        auto left = parsePrimary();
+
+        while (peek().type == TokenType::MULTIPLY || peek().type == TokenType::DIVIDE) {
+            TokenType op = peek().type;
+            advance();
+            auto right = parsePrimary();
+            left = std::make_shared<BinaryOpNode>(left, right, op);
+        }
+
+        return left;
     }
 
     std::shared_ptr<ASTNode> parsePrimary() {
@@ -216,6 +315,18 @@ private:
         throw std::runtime_error("Unexpected token in expression");
     }
 
+    std::shared_ptr<BlockNode> parseBlock() {
+        expect(TokenType::LBRACE);
+        auto block = std::make_shared<BlockNode>();
+
+        while (peek().type != TokenType::RBRACE && peek().type != TokenType::EOF_TYPE) {
+            block->statements.push_back(parseStatement());
+        }
+
+        expect(TokenType::RBRACE);
+        return block;
+    }
+
     std::shared_ptr<ASTNode> parseStatement() {
         Token token = peek();
 
@@ -225,6 +336,14 @@ private:
 
         if (token.type == TokenType::PRINT) {
             return parsePrintStatement();
+        }
+
+        if (token.type == TokenType::IF) {
+            return parseIfStatement();
+        }
+
+        if (token.type == TokenType::WHILE) {
+            return parseWhileStatement();
         }
 
         throw std::runtime_error("Unexpected statement");
@@ -249,6 +368,28 @@ private:
         return std::make_shared<PrintNode>(expr);
     }
 
+    std::shared_ptr<ASTNode> parseIfStatement() {
+        expect(TokenType::IF);
+        auto condition = parseExpression();
+        auto thenBlock = parseBlock();
+        std::shared_ptr<BlockNode> elseBlock = nullptr;
+
+        if (peek().type == TokenType::ELSE) {
+            advance();
+            elseBlock = parseBlock();
+        }
+
+        return std::make_shared<IfStatementNode>(condition, thenBlock, elseBlock);
+    }
+
+    std::shared_ptr<ASTNode> parseWhileStatement() {
+        expect(TokenType::WHILE);
+        auto condition = parseExpression();
+        auto body = parseBlock();
+
+        return std::make_shared<WhileStatementNode>(condition, body);
+    }
+
 public:
     Parser(const std::vector<Token>& t) : tokens(t), current(0) {}
 
@@ -263,54 +404,200 @@ public:
     }
 };
 
-int main() {
-    // Test the Lexer and Parser
-    std::string code = "let x = 10 + 5; print x;";
-    
-    // Lexing
-    Lexer lexer(code);
-    std::vector<Token> tokens = lexer.tokenize();
+// Semantic Analyzer (Symbol Table) (pure pain :) )
+class SemanticAnalyzer {
+private:
+    std::map<std::string, bool> symbols;
 
-    std::cout << "=== TOKENS ===" << std::endl;
-    for (const auto& token : tokens) {
-        std::cout << "Token: ";
-        switch (token.type) {
-        case TokenType::LET:
-            std::cout << "LET";
-            break;
-        case TokenType::PRINT:
-            std::cout << "PRINT";
-            break;
-        case TokenType::IDENTIFIER:
-            std::cout << "IDENTIFIER(" << token.value << ")";
-            break;
-        case TokenType::INTEGER:
-            std::cout << "INTEGER(" << token.value << ")";
-            break;
-        case TokenType::ASSIGN:
-            std::cout << "ASSIGN";
-            break;
-        case TokenType::PLUS:
-            std::cout << "PLUS";
-            break;
-        case TokenType::MINUS:
-            std::cout << "MINUS";
-            break;
-        case TokenType::SEMICOLON:
-            std::cout << "SEMICOLON";
-            break;
-        case TokenType::EOF_TYPE:
-            std::cout << "EOF";
-            break;
+    void checkVariable(const std::string& name, const std::shared_ptr<ASTNode>& node) {
+        if (auto id = std::dynamic_pointer_cast<IdentifierNode>(node)) {
+            if (symbols.find(id->name) == symbols.end()) {
+                throw std::runtime_error("Symbol not found: " + id->name);
+            }
+        } else if (auto binOp = std::dynamic_pointer_cast<BinaryOpNode>(node)) {
+            checkVariable(name, binOp->left);
+            checkVariable(name, binOp->right);
+        } else if (auto print = std::dynamic_pointer_cast<PrintNode>(node)) {
+            checkVariable(name, print->expression);
         }
-        std::cout << std::endl;
     }
 
-    // Parsing
-    std::cout << "\n=== AST ===" << std::endl;
-    Parser parser(tokens);
-    auto ast = parser.parse();
-    std::cout << "Program has " << ast->statements.size() << " statements" << std::endl;
+    void analyzeNode(const std::shared_ptr<ASTNode>& node) {
+        if (auto varDecl = std::dynamic_pointer_cast<VariableDeclNode>(node)) {
+            checkVariable(varDecl->name, varDecl->value);
+            symbols[varDecl->name] = true;
+        } else if (auto printStmt = std::dynamic_pointer_cast<PrintNode>(node)) {
+            checkVariable("", printStmt->expression);
+        } else if (auto ifStmt = std::dynamic_pointer_cast<IfStatementNode>(node)) {
+            checkVariable("", ifStmt->condition);
+            for (const auto& stmt : ifStmt->thenBlock->statements) {
+                analyzeNode(stmt);
+            }
+            if (ifStmt->elseBlock) {
+                for (const auto& stmt : ifStmt->elseBlock->statements) {
+                    analyzeNode(stmt);
+                }
+            }
+        } else if (auto whileStmt = std::dynamic_pointer_cast<WhileStatementNode>(node)) {
+            checkVariable("", whileStmt->condition);
+            for (const auto& stmt : whileStmt->body->statements) {
+                analyzeNode(stmt);
+            }
+        }
+    }
+
+public:
+    void analyze(const std::shared_ptr<ProgramNode>& program) {
+        for (const auto& stmt : program->statements) {
+            analyzeNode(stmt);
+        }
+    }
+};
+
+// Transpiler (generates C++ code) 
+class Transpiler {
+private:
+    std::stringstream code;
+    int indentLevel;
+
+    std::string getIndent() {
+        return std::string(indentLevel * 4, ' ');
+    }
+
+    std::string transpileExpression(const std::shared_ptr<ASTNode>& node) {
+        if (auto intNode = std::dynamic_pointer_cast<IntegerNode>(node)) {
+            return std::to_string(intNode->value);
+        } else if (auto idNode = std::dynamic_pointer_cast<IdentifierNode>(node)) {
+            return idNode->name;
+        } else if (auto binOp = std::dynamic_pointer_cast<BinaryOpNode>(node)) {
+            std::string left = transpileExpression(binOp->left);
+            std::string right = transpileExpression(binOp->right);
+            std::string op;
+
+            switch (binOp->op) {
+            case TokenType::PLUS: op = "+"; break;
+            case TokenType::MINUS: op = "-"; break;
+            case TokenType::MULTIPLY: op = "*"; break;
+            case TokenType::DIVIDE: op = "/"; break;
+            case TokenType::EQ: op = "=="; break;
+            case TokenType::NE: op = "!="; break;
+            case TokenType::LT: op = "<"; break;
+            case TokenType::GT: op = ">"; break;
+            case TokenType::LE: op = "<="; break;
+            case TokenType::GE: op = ">="; break;
+            default: op = "?"; break;
+            }
+
+            return "(" + left + " " + op + " " + right + ")";
+        }
+        return "";
+    }
+
+    void transpileStatement(const std::shared_ptr<ASTNode>& node) {
+        if (auto varDecl = std::dynamic_pointer_cast<VariableDeclNode>(node)) {
+            code << getIndent() << "int " << varDecl->name << " = " << transpileExpression(varDecl->value) << ";\n";
+        } else if (auto printStmt = std::dynamic_pointer_cast<PrintNode>(node)) {
+            code << getIndent() << "std::cout << " << transpileExpression(printStmt->expression) << " << std::endl;\n";
+        } else if (auto ifStmt = std::dynamic_pointer_cast<IfStatementNode>(node)) {
+            code << getIndent() << "if (" << transpileExpression(ifStmt->condition) << ") {\n";
+            indentLevel++;
+            for (const auto& stmt : ifStmt->thenBlock->statements) {
+                transpileStatement(stmt);
+            }
+            indentLevel--;
+            if (ifStmt->elseBlock) {
+                code << getIndent() << "} else {\n";
+                indentLevel++;
+                for (const auto& stmt : ifStmt->elseBlock->statements) {
+                    transpileStatement(stmt);
+                }
+                indentLevel--;
+            }
+            code << getIndent() << "}\n";
+        } else if (auto whileStmt = std::dynamic_pointer_cast<WhileStatementNode>(node)) {
+            code << getIndent() << "while (" << transpileExpression(whileStmt->condition) << ") {\n";
+            indentLevel++;
+            for (const auto& stmt : whileStmt->body->statements) {
+                transpileStatement(stmt);
+            }
+            indentLevel--;
+            code << getIndent() << "}\n";
+        }
+    }
+
+public:
+    Transpiler() : indentLevel(0) {}
+
+    std::string transpile(const std::shared_ptr<ProgramNode>& program) {
+        code.str("");
+        code << "#include <iostream>\n\n";
+        code << "int main() {\n";
+        indentLevel = 1;
+
+        for (const auto& stmt : program->statements) {
+            transpileStatement(stmt);
+        }
+
+        indentLevel = 0;
+        code << "    return 0;\n";
+        code << "}\n";
+
+        return code.str();
+    }
+};
+
+int main() {
+    std::string code = R"(
+        let x = 10;
+        let y = 5;
+        print x + y;
+        
+        if x > y {
+            print 1;
+        } else {
+            print 0;
+        }
+        
+        let i = 0;
+        while i < 3 {
+            print i;
+            let i = i + 1;
+        }
+    )";
+
+    try {
+        // Lexing
+        Lexer lexer(code);
+        std::vector<Token> tokens = lexer.tokenize();
+
+        std::cout << "=== TOKENS ===" << std::endl;
+        for (const auto& token : tokens) {
+            if (token.type == TokenType::EOF_TYPE) break;
+            std::cout << "Token: " << static_cast<int>(token.type) << " Value: " << token.value << std::endl;
+        }
+
+        // Parsing
+        std::cout << "\n=== PARSING ===" << std::endl;
+        Parser parser(tokens);
+        auto ast = parser.parse();
+        std::cout << "Program has " << ast->statements.size() << " statements" << std::endl;
+
+        // Semantic Analysis
+        std::cout << "\n=== SEMANTIC ANALYSIS ===" << std::endl;
+        SemanticAnalyzer analyzer;
+        analyzer.analyze(ast);
+        std::cout << "Semantic analysis passed!" << std::endl;
+
+        // Transpilation
+        std::cout << "\n=== TRANSPILED C++ CODE ===" << std::endl;
+        Transpiler transpiler;
+        std::string cppCode = transpiler.transpile(ast);
+        std::cout << cppCode << std::endl;
+
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
 
     return 0;
 }
